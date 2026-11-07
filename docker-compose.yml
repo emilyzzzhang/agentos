@@ -1,0 +1,50 @@
+# Local database infrastructure for AgentOS (databases only; the API and UI run on the host).
+#
+#   cp .env.example .env        # set AGENTOS_PG_PASSWORD
+#   docker compose up -d        # start
+#   docker compose ps           # health
+#   docker compose stop         # stop, keep data
+#
+# Data lives in the named volumes below and survives `stop`, `down`, and restarts.
+# `docker compose down -v` DELETES the volumes (all documents, vectors and mission history).
+name: agentos
+
+services:
+  postgres:
+    image: postgres:17.10-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${AGENTOS_PG_USER:-agentos}
+      POSTGRES_PASSWORD: ${AGENTOS_PG_PASSWORD:?Set AGENTOS_PG_PASSWORD in .env (see .env.example)}
+      POSTGRES_DB: ${AGENTOS_PG_DB:-agentos}
+    ports:
+      - "127.0.0.1:${AGENTOS_PG_PORT:-5433}:5432"
+    volumes:
+      - agentos_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+  qdrant:
+    image: qdrant/qdrant:v1.20.0
+    restart: unless-stopped
+    environment:
+      QDRANT__TELEMETRY_DISABLED: "true"
+    ports:
+      - "127.0.0.1:${AGENTOS_QDRANT_PORT:-6333}:6333"
+    volumes:
+      - agentos_qdrant:/qdrant/storage
+    healthcheck:
+      # The image has no curl/wget; use bash's /dev/tcp to call the readiness endpoint.
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/6333 && printf 'GET /readyz HTTP/1.0\\r\\n\\r\\n' >&3 && grep -q ' 200 ' <&3"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+volumes:
+  agentos_pgdata:
+  agentos_qdrant:
